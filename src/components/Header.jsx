@@ -43,6 +43,48 @@ const Header = () => {
     console.log("Archive spreadsheet:", result);
   };
 
+  const queueArchiveAttempt = async ({ info, title, videoUrl, targetDir, formats, formatIndex }) => {
+    const format = formats[formatIndex];
+
+    const res = await window.electronAPI.queuePlaylist({
+      title,
+      uploader: info.uploader || "",
+      url: "",
+      targetDir,
+      allowDuplicates: true,
+      numberItems: false,
+      formatLabel: format.quality || `${format.height || "Best"}p`,
+      thumbnailUrl: info.thumbnailUrl || "",
+      items: [{
+        id: info.videoId,
+        playlistIndex: 1,
+        url: info.webpageUrl || videoUrl,
+        title,
+        thumbnail: info.thumbnailUrl || "",
+        duration: info.duration || 0,
+        type: "mp4",
+        quality: String(format.itag),
+        qualityLabel: format.quality || "Best",
+        convertToH264: false,
+        sizeBytes: format.size || 0,
+      }],
+    });
+
+    if (!res.success) {
+      throw new Error(res.error || "Could not queue archive video.");
+    }
+
+    archiveJobRef.current = {
+      jobId: res.jobId,
+      url: videoUrl,
+      title,
+      info,
+      formats,
+      formatIndex,
+      targetDir,
+    };
+  };
+
   const queueNextArchiveVideo = async (rows, completedUrls, targetDir) => {
     const MIN_FREE_GB = 20;
 
@@ -69,6 +111,7 @@ const Header = () => {
       );
       return;
     }
+
     const row = rows.find(r => {
       const rowUrl = r["URL"];
       return rowUrl && !completedUrls.includes(rowUrl);
@@ -107,43 +150,33 @@ const Header = () => {
       return;
     }
 
-    const best = info.formats[0];
+    // Start at the highest real video quality at or below 1440p. The formats
+    // supplied by main.js are already ordered highest-to-lowest. If that
+    // stream fails, the job-finished handler below retries this same video at
+    // the next lower quality (1080p, 720p, etc.) before giving up.
+    const formats = info.formats.filter(format =>
+      Number(format.height) > 0 && Number(format.height) <= 1440
+    );
 
-    const res = await window.electronAPI.queuePlaylist({
-      title: title,
-      uploader: info.uploader || "",
-      url: "",
-      targetDir,
-      allowDuplicates: true,
-      numberItems: false,
-      formatLabel: `Best (${best.quality})`,
-      thumbnailUrl: info.thumbnailUrl || "",
-      items: [{
-        id: info.videoId,
-        playlistIndex: 1,
-        url: info.webpageUrl || videoUrl,
-        title,
-        thumbnail: info.thumbnailUrl || "",
-        duration: info.duration || 0,
-        type: "mp4",
-        quality: String(best.itag),
-        qualityLabel: best.quality || "Best",
-        convertToH264: false,
-        sizeBytes: best.size || 0,
-      }],
-    });
-
-    if (!res.success) {
-      alert(`Could not queue:\n${title}\n\n${res.error}`);
+    if (formats.length === 0) {
+      alert(`No usable video format at or below 1440p found for:\n${title}`);
       setArchiveRunning(false);
       return;
     }
 
-    archiveJobRef.current = {
-      jobId: res.jobId,
-      url: videoUrl,
-      title,
-    };
+    try {
+      await queueArchiveAttempt({
+        info,
+        title,
+        videoUrl,
+        targetDir,
+        formats,
+        formatIndex: 0,
+      });
+    } catch (error) {
+      alert(`Could not queue:\n${title}\n\n${error.message}`);
+      setArchiveRunning(false);
+    }
   };
 
   const handleStartArchive = async () => {
@@ -183,16 +216,45 @@ const Header = () => {
     archiveJobRef.current = null;
 
     if (!result.success) {
-      setArchiveRunning(false);
-
-      if (!result.cancelled) {
-        alert(
-          `Archive stopped because this video did not finish:\n\n` +
-          `${current.title}\n\n` +
-          `${result.error || "Unknown download error"}`
-        );
+      if (result.cancelled) {
+        setArchiveRunning(false);
+        return;
       }
 
+      const nextFormatIndex = current.formatIndex + 1;
+
+      if (nextFormatIndex < current.formats.length) {
+        const failedFormat = current.formats[current.formatIndex];
+        const nextFormat = current.formats[nextFormatIndex];
+
+        console.warn(
+          `Archive download failed at ${failedFormat?.quality || "current quality"}; ` +
+          `retrying ${current.title} at ${nextFormat?.quality || "next lower quality"}.`,
+          result.error || "Unknown download error"
+        );
+
+        queueArchiveAttempt({
+          info: current.info,
+          title: current.title,
+          videoUrl: current.url,
+          targetDir: current.targetDir,
+          formats: current.formats,
+          formatIndex: nextFormatIndex,
+        }).catch(error => {
+          console.error("Archive fallback queue failed:", error);
+          setArchiveRunning(false);
+          alert(`Archive stopped:\n${error.message}`);
+        });
+
+        return;
+      }
+
+      setArchiveRunning(false);
+      alert(
+        `Archive stopped because all available qualities failed for:\n\n` +
+        `${current.title}\n\n` +
+        `${result.error || "Unknown download error"}`
+      );
       return;
     }
 
