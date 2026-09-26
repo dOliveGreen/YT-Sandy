@@ -35,7 +35,6 @@ function getYtDlpEnv() {
 // config out of userData; migrateMisplacedStore() below cleans it up.
 const Store = require("electron-store");
 
-
 // Base yt-dlp flags shared by info fetch and download
 const BASE_ARGS = [
   '--no-playlist',
@@ -136,6 +135,27 @@ function migrateMisplacedStore() {
 migrateMisplacedStore();
 
 const store = new Store();
+
+const ARCHIVE_PROGRESS_KEY = "personalArchiveProgress";
+
+function getArchiveProgress() {
+  return store.get(ARCHIVE_PROGRESS_KEY, {
+    completedUrls: [],
+    lastCompleted: null,
+  });
+}
+
+function saveArchiveProgress(progress) {
+  store.set(ARCHIVE_PROGRESS_KEY, progress);
+}
+
+function clearArchiveProgress() {
+  store.set(ARCHIVE_PROGRESS_KEY, {
+    completedUrls: [],
+    lastCompleted: null,
+  });
+}
+
 let mainWindow;
 let currentInfoFetchProcess = null;
 let isUpdatingYtDlp = false;
@@ -670,6 +690,20 @@ const sizeToBytes = (value, unit) => {
 // ---------------------------------------------------------------------------
 // History
 // ---------------------------------------------------------------------------
+// Personal archive progress
+ipcMain.handle("get-archive-progress", () => {
+  return getArchiveProgress();
+});
+
+ipcMain.handle("set-archive-progress", (event, progress) => {
+  saveArchiveProgress(progress);
+  return getArchiveProgress();
+});
+
+ipcMain.handle("clear-archive-progress", () => {
+  clearArchiveProgress();
+  return getArchiveProgress();
+});
 ipcMain.handle("get-history", () => store.get('downloadHistory', []));
 ipcMain.handle("clear-history", () => store.set('downloadHistory', []));
 ipcMain.handle("add-history-item", (event, item) => {

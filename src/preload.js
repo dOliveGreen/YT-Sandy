@@ -40,6 +40,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   fileExists: (filePath) => ipcRenderer.invoke("file-exists", filePath),
   openExternalLink: (url) => ipcRenderer.invoke("open-external-link", url),
 
+  // Personal archive progress
+  getArchiveProgress: () => ipcRenderer.invoke("get-archive-progress"),
+  setArchiveProgress: (progress) => ipcRenderer.invoke("set-archive-progress", progress),
+  clearArchiveProgress: () => ipcRenderer.invoke("clear-archive-progress"),
+
   // History
   getHistory: () => ipcRenderer.invoke("get-history"),
   clearHistory: () => ipcRenderer.invoke("clear-history"),
