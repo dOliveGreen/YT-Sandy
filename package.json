@@ -72,6 +72,7 @@
   "dependencies": {
     "electron-store": "^8.2.0",
     "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0"
+    "ffprobe-static": "^3.1.0",
+    "xlsx": "^0.18.5"
   }
 }
