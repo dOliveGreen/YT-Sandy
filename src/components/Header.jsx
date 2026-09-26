@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -9,9 +9,14 @@ import { Logo } from '@/components/ui/logo';
 import { LANDING_URL } from '@/lib/links';
 
 const Header = () => {
-  const { url, urlInputRef, handleUrlChange, handleFetchDetails, isLoading, activeJobs, isDownloading, goBackToHistory } = useAppContext();
+  const { url, urlInputRef, handleUrlChange, handleFetchDetails, isLoading, activeJobs, isDownloading, goBackToHistory, jobResults } = useAppContext();
   const [urlFocused, setUrlFocused] = useState(false);
   const [archiveRows, setArchiveRows] = useState([]);
+  const [archiveRunning, setArchiveRunning] = useState(false);
+  const [archiveProgress, setArchiveProgress] = useState(null);
+  const archiveRowsRef = useRef([]);
+  const archiveTargetDirRef = useRef(null);
+  const archiveJobRef = useRef(null);
 
   const handleImportSpreadsheet = async () => {
     const result = await window.electronAPI.chooseArchiveSpreadsheet();
@@ -28,43 +33,59 @@ const Header = () => {
       `Sheet: ${result.sheetName}\n` +
       `Rows: ${result.rowCount}`
     );
+
     setArchiveRows(result.rows);
+    archiveRowsRef.current = result.rows;
+
+    const savedProgress = await window.electronAPI.getArchiveProgress();
+    setArchiveProgress(savedProgress);
+
     console.log("Archive spreadsheet:", result);
   };
-  const handleTestArchiveDownload = async () => {
-    if (archiveRows.length === 0) {
-      alert("Import the archive spreadsheet first.");
+
+  const queueNextArchiveVideo = async (rows, completedUrls, targetDir) => {
+    const row = rows.find(r => {
+      const rowUrl = r["URL"];
+      return rowUrl && !completedUrls.includes(rowUrl);
+    });
+
+    if (!row) {
+      setArchiveRunning(false);
+      archiveJobRef.current = null;
+      alert("Archive complete! All spreadsheet videos have been processed.");
       return;
     }
 
-    const row = archiveRows[0];
     const title = row["Title"];
-    const url = row["URL"];
+    const videoUrl = row["URL"];
 
-    if (!title || !url) {
-      alert("The first spreadsheet row is missing Title or URL.");
+    if (!title || !videoUrl) {
+      alert("An archive row is missing Title or URL.");
+      setArchiveRunning(false);
       return;
     }
 
-    const info = await window.electronAPI.getVideoInfo(url);
+    const info = await window.electronAPI.getVideoInfo(videoUrl);
 
     if (!info.success) {
-      alert(`Could not fetch video information:\n${info.error}`);
+      alert(
+        `Could not fetch:\n${title}\n\n${info.error}\n\n` +
+        `Archive stopped. Resume after resolving the problem.`
+      );
+      setArchiveRunning(false);
       return;
     }
 
     if (info.isAudioOnly || !info.formats?.length) {
-      alert("No usable video format was found.");
+      alert(`No usable video format found for:\n${title}`);
+      setArchiveRunning(false);
       return;
     }
 
     const best = info.formats[0];
 
-    const targetDir = await window.electronAPI.chooseDirectory();
-    if (!targetDir) return;
-
     const res = await window.electronAPI.queuePlaylist({
-      title: "Archive Test",
+      title: title,
       uploader: info.uploader || "",
       url: "",
       targetDir,
@@ -75,7 +96,7 @@ const Header = () => {
       items: [{
         id: info.videoId,
         playlistIndex: 1,
-        url: info.webpageUrl || url,
+        url: info.webpageUrl || videoUrl,
         title,
         thumbnail: info.thumbnailUrl || "",
         duration: info.duration || 0,
@@ -88,9 +109,109 @@ const Header = () => {
     });
 
     if (!res.success) {
-      alert(`Could not start test download:\n${res.error}`);
+      alert(`Could not queue:\n${title}\n\n${res.error}`);
+      setArchiveRunning(false);
+      return;
     }
+
+    archiveJobRef.current = {
+      jobId: res.jobId,
+      url: videoUrl,
+      title,
+    };
   };
+
+  const handleStartArchive = async () => {
+    if (archiveRows.length === 0) {
+      alert("Import the archive spreadsheet first.");
+      return;
+    }
+
+    const targetDir = await window.electronAPI.chooseDirectory();
+    if (!targetDir) return;
+
+    archiveTargetDirRef.current = targetDir;
+
+    const saved = await window.electronAPI.getArchiveProgress();
+    const completedUrls = Array.isArray(saved?.completedUrls)
+      ? saved.completedUrls
+      : [];
+
+    setArchiveProgress(saved);
+    setArchiveRunning(true);
+
+    await queueNextArchiveVideo(
+      archiveRowsRef.current,
+      completedUrls,
+      targetDir
+    );
+  };
+
+  useEffect(() => {
+    if (!archiveRunning || !archiveJobRef.current) return;
+
+    const current = archiveJobRef.current;
+    const result = jobResults?.[current.jobId];
+
+    if (!result) return;
+
+    archiveJobRef.current = null;
+
+    if (!result.success) {
+      setArchiveRunning(false);
+
+      if (!result.cancelled) {
+        alert(
+          `Archive stopped because this video did not finish:\n\n` +
+          `${current.title}\n\n` +
+          `${result.error || "Unknown download error"}`
+        );
+      }
+
+      return;
+    }
+
+    const finishAndContinue = async () => {
+      const saved = await window.electronAPI.getArchiveProgress();
+      const completedUrls = Array.isArray(saved?.completedUrls)
+        ? saved.completedUrls
+        : [];
+
+      const updatedUrls = completedUrls.includes(current.url)
+        ? completedUrls
+        : [...completedUrls, current.url];
+
+      const updated = {
+        ...saved,
+        completedUrls: updatedUrls,
+        lastCompleted: {
+          url: current.url,
+          title: current.title,
+          completedAt: new Date().toISOString(),
+        },
+      };
+
+      await window.electronAPI.setArchiveProgress(updated);
+      setArchiveProgress(updated);
+
+      if (!archiveTargetDirRef.current) {
+        setArchiveRunning(false);
+        return;
+      }
+
+      await queueNextArchiveVideo(
+        archiveRowsRef.current,
+        updatedUrls,
+        archiveTargetDirRef.current
+      );
+    };
+
+    finishAndContinue().catch(error => {
+      console.error("Archive continuation failed:", error);
+      setArchiveRunning(false);
+      alert(`Archive stopped:\n${error.message}`);
+    });
+  }, [jobResults, archiveRunning]);
 
   // px-[21px] matches the card's inner inset below (20px padding + 1px border),
   // so this row shares a column with Downloads / Settings / Clear.
@@ -147,11 +268,11 @@ const Header = () => {
       </Button>
       <Button
         variant="outline"
-        onClick={handleTestArchiveDownload}
-        disabled={archiveRows.length === 0}
+        onClick={handleStartArchive}
+        disabled={archiveRows.length === 0 || archiveRunning}
         className="h-10 px-4 font-semibold"
       >
-        Test First Video
+        {archiveRunning ? "Archive Running..." : "Start / Resume Archive"}
       </Button>
       {/* Downloads — visible whenever anything is queued or downloading */}
       <Tooltip>
