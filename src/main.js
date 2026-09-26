@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, net, session, nativeTheme } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const XLSX = require("xlsx");
 const os = require("os");
 const { pathToFileURL } = require("url");
 const { spawn, execFile } = require("child_process");
@@ -1868,6 +1869,51 @@ ipcMain.handle("choose-directory", async () => {
   // The chosen folder IS the destination here, not the parent of one.
   rememberSaveDirectory(result.filePaths[0]);
   return result.filePaths[0];
+});
+
+ipcMain.handle("choose-archive-spreadsheet", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Spreadsheet",
+        extensions: ["xlsx", "xls", "csv"]
+      }
+    ]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  const filePath = result.filePaths[0];
+
+  try {
+    const workbook = XLSX.readFile(filePath, { cellDates: true });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+
+    const rows = XLSX.utils.sheet_to_json(worksheet, {
+      defval: "",
+      raw: false
+    });
+
+    return {
+      success: true,
+      filePath,
+      sheetName: firstSheetName,
+      rowCount: rows.length,
+      rows
+    };
+  } catch (error) {
+    console.error("Failed to read archive spreadsheet:", error);
+
+    return {
+      success: false,
+      filePath,
+      error: error.message
+    };
+  }
 });
 
 // Ordered download candidates for a thumbnail URL. Playlist entries carry

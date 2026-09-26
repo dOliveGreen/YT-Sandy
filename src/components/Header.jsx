@@ -4,13 +4,31 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Kbd } from '@/components/ui/kbd';
-import { Loader2, Search, ArrowDownToLine } from 'lucide-react';
+import { Loader2, Search, ArrowDownToLine, FileSpreadsheet } from 'lucide-react';
 import { Logo } from '@/components/ui/logo';
 import { LANDING_URL } from '@/lib/links';
 
 const Header = () => {
   const { url, urlInputRef, handleUrlChange, handleFetchDetails, isLoading, activeJobs, isDownloading, goBackToHistory } = useAppContext();
   const [urlFocused, setUrlFocused] = useState(false);
+  const handleImportSpreadsheet = async () => {
+    const result = await window.electronAPI.chooseArchiveSpreadsheet();
+
+    if (!result) return;
+
+    if (!result.success) {
+      alert(`Could not read spreadsheet:\n${result.error}`);
+      return;
+    }
+
+    alert(
+      `Spreadsheet loaded successfully!\n\n` +
+      `Sheet: ${result.sheetName}\n` +
+      `Rows: ${result.rowCount}`
+    );
+
+    console.log("Archive spreadsheet:", result);
+  };
 
   // px-[21px] matches the card's inner inset below (20px padding + 1px border),
   // so this row shares a column with Downloads / Settings / Clear.
@@ -57,7 +75,14 @@ const Header = () => {
           </>
         )}
       </Button>
-
+      <Button
+        variant="outline"
+        onClick={handleImportSpreadsheet}
+        className="h-10 px-4 font-semibold"
+      >
+        <FileSpreadsheet className="h-4 w-4" />
+        Import Spreadsheet
+      </Button>
       {/* Downloads — visible whenever anything is queued or downloading */}
       <Tooltip>
         <TooltipTrigger asChild>

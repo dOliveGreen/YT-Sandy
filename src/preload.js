@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Files & folders
   chooseDirectory: () => ipcRenderer.invoke("choose-directory"),
+  chooseArchiveSpreadsheet: () => ipcRenderer.invoke("choose-archive-spreadsheet"),
   downloadThumbnail: (options) => ipcRenderer.invoke("download-thumbnail", options),
   openFileLocation: (filePath) => ipcRenderer.invoke("open-file-location", filePath),
   openFileOrFolder: (options) => ipcRenderer.invoke("open-file-or-folder", options),
