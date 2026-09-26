@@ -1950,6 +1950,29 @@ ipcMain.handle("choose-archive-spreadsheet", async () => {
   }
 });
 
+ipcMain.handle("get-free-disk-space", async (event, targetPath) => {
+  try {
+    if (!targetPath) {
+      return { success: false, error: "No target path provided." };
+    }
+
+    const stats = await fs.promises.statfs(targetPath);
+    const freeBytes = stats.bavail * stats.bsize;
+
+    return {
+      success: true,
+      freeBytes,
+      freeGB: freeBytes / (1024 ** 3),
+    };
+  } catch (error) {
+    console.error("Could not check free disk space:", error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+});
+
 // Ordered download candidates for a thumbnail URL. Playlist entries carry
 // hqdefault (480x360, letterboxed to 4:3), so for i.ytimg.com try the clean
 // 16:9 variants in descending quality, falling back until one exists (missing

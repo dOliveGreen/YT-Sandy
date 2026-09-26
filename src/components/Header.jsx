@@ -44,6 +44,31 @@ const Header = () => {
   };
 
   const queueNextArchiveVideo = async (rows, completedUrls, targetDir) => {
+    const MIN_FREE_GB = 20;
+
+    const disk = await window.electronAPI.getFreeDiskSpace(targetDir);
+
+    if (!disk.success) {
+      setArchiveRunning(false);
+      alert(
+        `Archive stopped because free disk space could not be checked.\n\n` +
+        `${disk.error}`
+      );
+      return;
+    }
+
+    if (disk.freeGB < MIN_FREE_GB) {
+      setArchiveRunning(false);
+      archiveJobRef.current = null;
+
+      alert(
+        `Archive paused — disk space is getting low.\n\n` +
+        `Free space: ${disk.freeGB.toFixed(1)} GB\n` +
+        `Minimum reserve: ${MIN_FREE_GB} GB\n\n` +
+        `Let OneDrive finish syncing, use "Free up space", then Start / Resume Archive.`
+      );
+      return;
+    }
     const row = rows.find(r => {
       const rowUrl = r["URL"];
       return rowUrl && !completedUrls.includes(rowUrl);
