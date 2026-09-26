@@ -11,6 +11,8 @@ import { LANDING_URL } from '@/lib/links';
 const Header = () => {
   const { url, urlInputRef, handleUrlChange, handleFetchDetails, isLoading, activeJobs, isDownloading, goBackToHistory } = useAppContext();
   const [urlFocused, setUrlFocused] = useState(false);
+  const [archiveRows, setArchiveRows] = useState([]);
+
   const handleImportSpreadsheet = async () => {
     const result = await window.electronAPI.chooseArchiveSpreadsheet();
 
@@ -26,8 +28,68 @@ const Header = () => {
       `Sheet: ${result.sheetName}\n` +
       `Rows: ${result.rowCount}`
     );
-
+    setArchiveRows(result.rows);
     console.log("Archive spreadsheet:", result);
+  };
+  const handleTestArchiveDownload = async () => {
+    if (archiveRows.length === 0) {
+      alert("Import the archive spreadsheet first.");
+      return;
+    }
+
+    const row = archiveRows[0];
+    const title = row["Title"];
+    const url = row["URL"];
+
+    if (!title || !url) {
+      alert("The first spreadsheet row is missing Title or URL.");
+      return;
+    }
+
+    const info = await window.electronAPI.getVideoInfo(url);
+
+    if (!info.success) {
+      alert(`Could not fetch video information:\n${info.error}`);
+      return;
+    }
+
+    if (info.isAudioOnly || !info.formats?.length) {
+      alert("No usable video format was found.");
+      return;
+    }
+
+    const best = info.formats[0];
+
+    const targetDir = await window.electronAPI.chooseDirectory();
+    if (!targetDir) return;
+
+    const res = await window.electronAPI.queuePlaylist({
+      title: "Archive Test",
+      uploader: info.uploader || "",
+      url: "",
+      targetDir,
+      allowDuplicates: true,
+      numberItems: false,
+      formatLabel: `Best (${best.quality})`,
+      thumbnailUrl: info.thumbnailUrl || "",
+      items: [{
+        id: info.videoId,
+        playlistIndex: 1,
+        url: info.webpageUrl || url,
+        title,
+        thumbnail: info.thumbnailUrl || "",
+        duration: info.duration || 0,
+        type: "mp4",
+        quality: String(best.itag),
+        qualityLabel: best.quality || "Best",
+        convertToH264: false,
+        sizeBytes: best.size || 0,
+      }],
+    });
+
+    if (!res.success) {
+      alert(`Could not start test download:\n${res.error}`);
+    }
   };
 
   // px-[21px] matches the card's inner inset below (20px padding + 1px border),
@@ -82,6 +144,14 @@ const Header = () => {
       >
         <FileSpreadsheet className="h-4 w-4" />
         Import Spreadsheet
+      </Button>
+      <Button
+        variant="outline"
+        onClick={handleTestArchiveDownload}
+        disabled={archiveRows.length === 0}
+        className="h-10 px-4 font-semibold"
+      >
+        Test First Video
       </Button>
       {/* Downloads — visible whenever anything is queued or downloading */}
       <Tooltip>
