@@ -150,16 +150,16 @@ const Header = () => {
       return;
     }
 
-    // Start at the highest real video quality at or below 1440p. The formats
+    // Start at the highest real video quality from 720p through 1440p. The formats
     // supplied by main.js are already ordered highest-to-lowest. If that
-    // stream fails, the job-finished handler below retries this same video at
-    // the next lower quality (1080p, 720p, etc.) before giving up.
+    // stream fails, the job-finished handler retries this same video at the
+    // next lower eligible quality, but never automatically below 720p.
     const formats = info.formats.filter(format =>
-      Number(format.height) > 0 && Number(format.height) <= 1440
+      Number(format.height) >= 720 && Number(format.height) <= 1440
     );
 
     if (formats.length === 0) {
-      alert(`No usable video format at or below 1440p found for:\n${title}`);
+      alert(`No usable video format from 720p through 1440p found for:\n${title}`);
       setArchiveRunning(false);
       return;
     }
@@ -249,12 +249,67 @@ const Header = () => {
         return;
       }
 
-      setArchiveRunning(false);
-      alert(
-        `Archive stopped because all available qualities failed for:\n\n` +
-        `${current.title}\n\n` +
-        `${result.error || "Unknown download error"}`
-      );
+      const recordFailureAndContinue = async () => {
+        const saved = await window.electronAPI.getArchiveProgress();
+        const completedUrls = Array.isArray(saved?.completedUrls)
+          ? saved.completedUrls
+          : [];
+        const failedVideos = Array.isArray(saved?.failedVideos)
+          ? saved.failedVideos
+          : [];
+
+        const failedFormat = current.formats[current.formatIndex];
+        const failure = {
+          url: current.url,
+          title: current.title,
+          lastQualityTried: failedFormat?.quality || `${failedFormat?.height || "Unknown"}p`,
+          error: result.error || "Unknown download error",
+          failedAt: new Date().toISOString(),
+        };
+
+        const updatedFailedVideos = [
+          ...failedVideos.filter(item => item?.url !== current.url),
+          failure,
+        ];
+
+        // Treat the failed URL as processed for this archive run so Resume
+        // does not loop back to it. The failure remains listed separately.
+        const updatedUrls = completedUrls.includes(current.url)
+          ? completedUrls
+          : [...completedUrls, current.url];
+
+        const updated = {
+          ...saved,
+          completedUrls: updatedUrls,
+          failedVideos: updatedFailedVideos,
+          lastFailed: failure,
+        };
+
+        await window.electronAPI.setArchiveProgress(updated);
+        setArchiveProgress(updated);
+
+        console.error(
+          `Archive skipped after all 720p-or-better qualities failed: ${current.title}`,
+          failure
+        );
+
+        if (!archiveTargetDirRef.current) {
+          setArchiveRunning(false);
+          return;
+        }
+
+        await queueNextArchiveVideo(
+          archiveRowsRef.current,
+          updatedUrls,
+          archiveTargetDirRef.current
+        );
+      };
+
+      recordFailureAndContinue().catch(error => {
+        console.error("Could not record failed archive video:", error);
+        setArchiveRunning(false);
+        alert(`Archive stopped while recording a failed video:\n${error.message}`);
+      });
       return;
     }
 
