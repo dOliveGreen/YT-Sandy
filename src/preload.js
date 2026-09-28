@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
 
   // Info fetching
-  getVideoInfo: (url) => ipcRenderer.invoke("get-video-info", url),
+  getVideoInfo: (url, forceRefresh = false, archiveRescue = false) => ipcRenderer.invoke("get-video-info", url, forceRefresh, archiveRescue),
   getPlaylistInfo: (url) => ipcRenderer.invoke("get-playlist-info", url),
   cancelInfoFetch: () => ipcRenderer.send("cancel-info-fetch"),
 

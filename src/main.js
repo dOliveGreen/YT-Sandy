@@ -1114,6 +1114,12 @@ async function getPoTokenArg(url) {
  */
 const YT_RETRY_CLIENTS = 'default,android,web_music';
 
+// Archive rescue client. Some otherwise-public videos expose only a stripped
+// 360p ladder to the normal client set but return their full HLS ladder (for
+// example 720p/1080p60) to web_safari. This is intentionally NOT part of the
+// normal path; Header.jsx requests it only after two normal 720p+ misses.
+const YT_ARCHIVE_RESCUE_CLIENTS = 'web_safari';
+
 // yt-dlp failure kinds worth a second attempt with the gated client set.
 const YT_RETRYABLE_KINDS = new Set(['age-blocked', 'no-formats', 'bot-check']);
 
@@ -1148,6 +1154,12 @@ async function ytDownloadArgs(url) {
   const videoId = youTubeVideoId(url);
   const clients = videoId && ytClientOverrides.get(videoId);
   if (!clients) return [];
+  // The web_safari archive rescue was verified without a PO token. Replay it
+  // exactly that way for the download; other retry clients keep their normal
+  // fresh-token behavior.
+  if (clients === YT_ARCHIVE_RESCUE_CLIENTS) {
+    return ['--extractor-args', `youtube:player_client=${clients}`];
+  }
   return ['--extractor-args', await ytExtractorArgs(url, clients)];
 }
 
@@ -1509,21 +1521,36 @@ function videoKeyFromUrl(url) {
   return url;
 }
 
-ipcMain.handle("get-video-info", async (event, url) => {
+ipcMain.handle("get-video-info", async (event, url, forceRefresh = false, archiveRescue = false) => {
   if (isUpdatingYtDlp) {
     return { success: false, error: 'yt-dlp is updating in the background, please try again in a moment.' };
   }
 
   const cacheKey = videoKeyFromUrl(url);
   const cached = videoInfoCache.get(cacheKey);
-  if (cached && Date.now() - cached.t < VIDEO_INFO_TTL_MS) {
+  if (!forceRefresh && cached && Date.now() - cached.t < VIDEO_INFO_TTL_MS) {
     console.log('Serving video info from cache:', cacheKey);
     return cached.payload;
   }
 
   try {
-    console.log('Fetching video info for:', url);
-    const info = await fetchVideoInfoWithRetry(url, false);
+    console.log('Fetching video info for:', url, archiveRescue ? '(web_safari archive rescue)' : '');
+    let info;
+    if (archiveRescue && isYouTubeUrl(url)) {
+      // Match the manually verified rescue command: authenticated cookies and
+      // Node come from runYtDlpJson's normal args; only the player client is
+      // overridden here. Do not request a PO token for this rescue path.
+      info = await runYtDlpJson(
+        url,
+        ['--extractor-args', `youtube:player_client=${YT_ARCHIVE_RESCUE_CLIENTS}`],
+        false
+      );
+      // Downloads re-extract the URL, so remember the same client that exposed
+      // the formats. ytDownloadArgs() will replay it for the queued download.
+      rememberClientOverride(url, YT_ARCHIVE_RESCUE_CLIENTS);
+    } else {
+      info = await fetchVideoInfoWithRetry(url, false);
+    }
     const { formats, audioSize, isAudioOnly } = extractFormats(info);
     console.log('Available qualities:', isAudioOnly ? 'audio only' : formats.map(f => f.quality).join(', '));
 

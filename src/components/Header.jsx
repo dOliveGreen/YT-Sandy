@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import { useAppContext } from '../contexts/AppContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -104,7 +104,7 @@ const Header = () => {
       archiveJobRef.current = null;
 
       alert(
-        `Archive paused — disk space is getting low.\n\n` +
+        `Archive paused â€” disk space is getting low.\n\n` +
         `Free space: ${disk.freeGB.toFixed(1)} GB\n` +
         `Minimum reserve: ${MIN_FREE_GB} GB\n\n` +
         `Let OneDrive finish syncing, use "Free up space", then Start / Resume Archive.`
@@ -159,8 +159,86 @@ const Header = () => {
     );
 
     if (formats.length === 0) {
-      alert(`No usable video format from 720p through 1440p found for:\n${title}`);
-      setArchiveRunning(false);
+      console.warn(
+        `No 720p-1440p format detected for ${title}; trying web_safari rescue once.`
+      );
+
+      const retryInfo = await window.electronAPI.getVideoInfo(videoUrl, true, true);
+
+      const retryFormats = retryInfo.success && Array.isArray(retryInfo.formats)
+        ? retryInfo.formats.filter(format =>
+            Number(format.height) >= 720 && Number(format.height) <= 1440
+          )
+        : [];
+
+      if (retryFormats.length > 0) {
+        console.log(
+          `Archive web_safari rescue found ${retryFormats[0]?.quality || `${retryFormats[0]?.height}p`} for ${title}.`
+        );
+
+        try {
+          await queueArchiveAttempt({
+            info: retryInfo,
+            title,
+            videoUrl,
+            targetDir,
+            formats: retryFormats,
+            formatIndex: 0,
+          });
+        } catch (error) {
+          alert(`Could not queue:\n${title}\n\n${error.message}`);
+          setArchiveRunning(false);
+        }
+        return;
+      }
+
+      const saved = await window.electronAPI.getArchiveProgress();
+      const completedUrls = Array.isArray(saved?.completedUrls)
+        ? saved.completedUrls
+        : [];
+      const failedVideos = Array.isArray(saved?.failedVideos)
+        ? saved.failedVideos
+        : [];
+
+      const failure = {
+        url: videoUrl,
+        title,
+        lastQualityTried: "No 720p-1440p format detected",
+        error: retryInfo.success
+          ? "No usable 720p through 1440p format detected after web_safari rescue"
+          : retryInfo.error || "web_safari rescue fetch failed",
+        failedAt: new Date().toISOString(),
+      };
+
+      const updatedFailedVideos = [
+        ...failedVideos.filter(item => item?.url !== videoUrl),
+        failure,
+      ];
+
+      const updatedUrls = completedUrls.includes(videoUrl)
+        ? completedUrls
+        : [...completedUrls, videoUrl];
+
+      const updated = {
+        ...saved,
+        completedUrls: updatedUrls,
+        failedVideos: updatedFailedVideos,
+        lastFailed: failure,
+      };
+
+      await window.electronAPI.setArchiveProgress(updated);
+      setArchiveProgress(updated);
+
+      console.error(
+        `Archive skipped after no 720p-1440p format was detected after web_safari rescue: ${title}`,
+        failure
+      );
+
+      await queueNextArchiveVideo(
+        archiveRowsRef.current,
+        updatedUrls,
+        targetDir
+      );
       return;
     }
 
@@ -371,7 +449,7 @@ const Header = () => {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleFetchDetails();
             // Escape hands focus back to the app so the global shortcuts apply
-            // again. The URL stays — losing a pasted link to a stray keypress
+            // again. The URL stays â€” losing a pasted link to a stray keypress
             // would be worse than the extra keystroke to clear it.
             else if (e.key === "Escape") e.currentTarget.blur();
           }}
@@ -416,7 +494,7 @@ const Header = () => {
       >
         {archiveRunning ? "Archive Running..." : "Start / Resume Archive"}
       </Button>
-      {/* Downloads — visible whenever anything is queued or downloading */}
+      {/* Downloads â€” visible whenever anything is queued or downloading */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -438,7 +516,7 @@ const Header = () => {
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           {activeJobs.length > 0
-            ? `Downloads — ${activeJobs.length} active`
+            ? `Downloads â€” ${activeJobs.length} active`
             : 'Downloads'}
         </TooltipContent>
       </Tooltip>
@@ -457,7 +535,7 @@ const Header = () => {
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
-          YT-Forge website ↗
+          YT-Forge website â†—
         </TooltipContent>
       </Tooltip>
     </header>
@@ -465,3 +543,5 @@ const Header = () => {
 };
 
 export default Header;
+
+
